@@ -1,0 +1,69 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Distribution / packaging
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# pytest / mypy
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets & local env (never commit API keys)
+.env
+.env.*
+!.env.example
+
+# Weights & checkpoints (large binaries; attach via Kaggle Dataset instead)
+*.h5
+*.hdf5
+*.keras
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.pb
+*.safetensors
+
+# Weights & Biases local runs
+wandb/
+
+# Kaggle
+.kaggle/kaggle.json
+
+# Downloaded at runtime on Kaggle (see kaggle_utils.ensure_resnet_cifar10_module)
+resnet_cifar10.py
+
+# Common data dumps
+*.npz
+*.npy
+*.pkl
+*.pickle
+
+# Logs
+*.log
