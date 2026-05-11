@@ -15,11 +15,17 @@ Yêu cầu:
 """
 
 # %%
+import os
+import sys
+
+if os.path.isdir("/kaggle/working") and "/kaggle/working" not in sys.path:
+    sys.path.insert(0, "/kaggle/working")
+
 import tensorflow as tf
 import numpy as np
-import os
 import json
-import wandb
+
+from kaggle_utils import get_weights_dir, load_keras_model, output_path
 
 from tensorflow import keras
 from tensorflow.keras.datasets import cifar10
@@ -31,9 +37,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 sns.set()
-
-WANDB_API_KEY = "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"
-wandb.login(key=WANDB_API_KEY)
 
 print(f"TensorFlow version: {tf.__version__}")
 
@@ -50,7 +53,7 @@ print(f"Test set: {x_test_norm.shape}, {y_test.shape}")
 # # Load ALL MediumCNN checkpoints
 
 # %%
-WEIGHTS_DIR = '/kaggle/working/mediumcnn_weights'
+WEIGHTS_DIR = get_weights_dir("mediumcnn_weights")
 NUM_RUNS = 5
 EPOCHS = 40
 
@@ -93,7 +96,7 @@ snapshot_epochs = list(range(0, EPOCHS, 5))
 snapshot_weights = {}
 for epoch in tqdm(snapshot_epochs, desc="Loading snapshots"):
     if epoch in all_models[analysis_run]:
-        model = tf.keras.models.load_model(all_models[analysis_run][epoch])
+        model = load_keras_model(all_models[analysis_run][epoch])
         snapshot_weights[epoch] = flatten_weights(model)
         tf.keras.backend.clear_session()
 
@@ -113,7 +116,7 @@ final_epoch = EPOCHS - 1
 trajectory_weights = {}
 for run_id in tqdm(range(1, NUM_RUNS + 1), desc="Loading trajectories"):
     if final_epoch in all_models[run_id]:
-        model = tf.keras.models.load_model(all_models[run_id][final_epoch])
+        model = load_keras_model(all_models[run_id][final_epoch])
         trajectory_weights[run_id] = flatten_weights(model)
         tf.keras.backend.clear_session()
 
@@ -147,7 +150,7 @@ axes[1].set_yticks(range(NUM_RUNS)); axes[1].set_yticklabels(range(1, NUM_RUNS +
 plt.colorbar(im2, ax=axes[1])
 
 plt.tight_layout()
-plt.savefig('/kaggle/working/mediumcnn_cosine_similarity.png', dpi=150)
+plt.savefig(output_path("mediumcnn_cosine_similarity.png"), dpi=150)
 plt.show()
 
 # %% [markdown]
@@ -158,8 +161,8 @@ print("=== Prediction Disagreement: SNAPSHOTS ===")
 snapshot_preds = {}
 for epoch in tqdm(snapshot_epochs, desc="Predictions snapshots"):
     if epoch in all_models[analysis_run]:
-        model = tf.keras.models.load_model(all_models[analysis_run][epoch])
-        snapshot_preds[epoch] = np.argmax(model.predict(x_test_norm), axis=1)
+        model = load_keras_model(all_models[analysis_run][epoch])
+        snapshot_preds[epoch] = np.argmax(model.predict(x_test_norm, verbose=0), axis=1)
         tf.keras.backend.clear_session()
 
 disagree_snapshots = np.zeros((n_snapshots, n_snapshots))
@@ -175,8 +178,8 @@ print("\n=== Prediction Disagreement: TRAJECTORIES ===")
 trajectory_preds = {}
 for run_id in tqdm(range(1, NUM_RUNS + 1), desc="Predictions trajectories"):
     if final_epoch in all_models[run_id]:
-        model = tf.keras.models.load_model(all_models[run_id][final_epoch])
-        trajectory_preds[run_id] = np.argmax(model.predict(x_test_norm), axis=1)
+        model = load_keras_model(all_models[run_id][final_epoch])
+        trajectory_preds[run_id] = np.argmax(model.predict(x_test_norm, verbose=0), axis=1)
         tf.keras.backend.clear_session()
 
 disagree_trajectories = np.zeros((NUM_RUNS, NUM_RUNS))
@@ -209,7 +212,7 @@ axes[1].set_yticks(range(NUM_RUNS)); axes[1].set_yticklabels(range(1, NUM_RUNS +
 plt.colorbar(im2, ax=axes[1])
 
 plt.tight_layout()
-plt.savefig('/kaggle/working/mediumcnn_prediction_disagreement.png', dpi=150)
+plt.savefig(output_path("mediumcnn_prediction_disagreement.png"), dpi=150)
 plt.show()
 
 # %% [markdown]
@@ -225,7 +228,7 @@ tsne_epochs = list(range(0, EPOCHS, 2))
 for run_id in tqdm(range(1, NUM_RUNS + 1), desc="Loading for tSNE"):
     for epoch in tsne_epochs:
         if epoch in all_models[run_id]:
-            model = tf.keras.models.load_model(all_models[run_id][epoch])
+            model = load_keras_model(all_models[run_id][epoch])
             tsne_weights.append(flatten_weights(model))
             tsne_labels.append((run_id, epoch))
             tsne_colors.append(run_id)
@@ -237,7 +240,7 @@ print(f"tSNE input shape: {tsne_weights.shape}")
 
 # %%
 print("Running tSNE...")
-tsne = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=1000)
+tsne = TSNE(n_components=2, random_state=42, perplexity=30, max_iter=1000)
 tsne_results = tsne.fit_transform(tsne_weights)
 print("tSNE complete!")
 
@@ -264,30 +267,49 @@ ax.set_ylabel("tSNE Dimension 2", fontsize=12)
 ax.legend(fontsize=10, loc='best')
 ax.grid(True, alpha=0.2)
 plt.tight_layout()
-plt.savefig('/kaggle/working/mediumcnn_tsne.png', dpi=150)
+plt.savefig(output_path("mediumcnn_tsne.png"), dpi=150)
 plt.show()
 
-# %% [markdown]
-# # Log to W&B
-
 # %%
-wandb.init(
-    project="loss-landscape",
-    name="mediumcnn_function_space_similarity",
-    config={"model": "MediumCNN", "experiment": "function_space_similarity"}
-)
+with open(output_path("mediumcnn_function_space_summary.json"), "w") as f:
+    json.dump(
+        {
+            "model": "MediumCNN",
+            "experiment": "function_space_similarity",
+            "snapshot_cos_sim_mean": float(
+                np.mean(cos_sim_snapshots[np.triu_indices(n_snapshots, k=1)])
+            ),
+            "trajectory_cos_sim_mean": float(
+                np.mean(cos_sim_trajectories[np.triu_indices(NUM_RUNS, k=1)])
+            ),
+            "snapshot_disagree_mean_pct": float(
+                np.mean(disagree_snapshots[np.triu_indices(n_snapshots, k=1)])
+            ),
+            "trajectory_disagree_mean_pct": float(
+                np.mean(disagree_trajectories[np.triu_indices(NUM_RUNS, k=1)])
+            ),
+        },
+        f,
+        indent=2,
+    )
 
-wandb.log({
-    "cosine_similarity": wandb.Image('/kaggle/working/mediumcnn_cosine_similarity.png'),
-    "prediction_disagreement": wandb.Image('/kaggle/working/mediumcnn_prediction_disagreement.png'),
-    "tsne_visualization": wandb.Image('/kaggle/working/mediumcnn_tsne.png'),
-    "snapshot_cos_sim_mean": float(np.mean(cos_sim_snapshots[np.triu_indices(n_snapshots, k=1)])),
-    "trajectory_cos_sim_mean": float(np.mean(cos_sim_trajectories[np.triu_indices(NUM_RUNS, k=1)])),
-    "snapshot_disagree_mean": float(np.mean(disagree_snapshots[np.triu_indices(n_snapshots, k=1)])),
-    "trajectory_disagree_mean": float(np.mean(disagree_trajectories[np.triu_indices(NUM_RUNS, k=1)])),
-})
+snap_cos = float(np.mean(cos_sim_snapshots[np.triu_indices(n_snapshots, k=1)]))
+traj_cos = float(np.mean(cos_sim_trajectories[np.triu_indices(NUM_RUNS, k=1)]))
+snap_dis = float(np.mean(disagree_snapshots[np.triu_indices(n_snapshots, k=1)]))
+traj_dis = float(np.mean(disagree_trajectories[np.triu_indices(NUM_RUNS, k=1)]))
 
-wandb.finish()
+fig, axes = plt.subplots(1, 2, figsize=(9, 4))
+axes[0].bar(["Snapshots", "Trajectories"], [snap_cos, traj_cos], color=["#4C72B0", "#DD8452"], edgecolor="black")
+axes[0].set_ylabel("Mean cosine similarity")
+axes[0].set_title("MediumCNN: cosine similarity (summary)")
+axes[0].grid(True, axis="y", alpha=0.3)
+axes[1].bar(["Snapshots", "Trajectories"], [snap_dis, traj_dis], color=["#4C72B0", "#DD8452"], edgecolor="black")
+axes[1].set_ylabel("Mean prediction disagreement (%)")
+axes[1].set_title("MediumCNN: prediction disagreement (summary)")
+axes[1].grid(True, axis="y", alpha=0.3)
+plt.tight_layout()
+plt.savefig(output_path("mediumcnn_function_space_summary_bars.png"), dpi=150)
+plt.show()
 
 # %%
 print("\n" + "="*60)

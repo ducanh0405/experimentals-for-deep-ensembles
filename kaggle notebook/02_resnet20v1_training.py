@@ -11,21 +11,44 @@ Mục tiêu:
 """
 
 # %%
+import os
+import sys
+
+if os.path.isdir("/kaggle/working") and "/kaggle/working" not in sys.path:
+    sys.path.insert(0, "/kaggle/working")
+
 import tensorflow as tf
 import numpy as np
-import os
 import time
 import json
 import subprocess
-import wandb
 
 from tensorflow.keras.layers import *
 from tensorflow.keras.models import *
 import matplotlib.pyplot as plt
 
-# Đăng nhập W&B với API key
-WANDB_API_KEY = "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"
-wandb.login(key=WANDB_API_KEY)
+from kaggle_utils import (
+    WORKING_DIR,
+    ensure_resnet_cifar10_module,
+    tf_autotune,
+    wandb_login_optional,
+)
+
+WANDB_OK = wandb_login_optional()
+wandb = None
+if WANDB_OK:
+
+    def _install_wandb():
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "wandb", "--quiet"]
+        )
+
+    try:
+        import wandb as _wandb
+    except ImportError:
+        _install_wandb()
+        import wandb as _wandb
+    wandb = _wandb
 
 print(f"TensorFlow version: {tf.__version__}")
 print(f"GPU available: {tf.config.list_physical_devices('GPU')}")
@@ -34,13 +57,7 @@ print(f"GPU available: {tf.config.list_physical_devices('GPU')}")
 # # Download ResNet CIFAR-10 module
 
 # %%
-# Download module từ keras-idiomatic-programmer
-if not os.path.exists('resnet_cifar10.py'):
-    subprocess.run([
-        'wget',
-        'https://raw.githubusercontent.com/GoogleCloudPlatform/keras-idiomatic-programmer/master/zoo/resnet/resnet_cifar10.py'
-    ])
-
+ensure_resnet_cifar10_module()
 import resnet_cifar10
 
 # %% [markdown]
@@ -50,7 +67,7 @@ import resnet_cifar10
 (x_train, y_train), (x_test, y_test) = tf.keras.datasets.cifar10.load_data()
 
 BATCH_SIZE = 128
-AUTO = tf.data.experimental.AUTOTUNE
+AUTO = tf_autotune()
 
 def normalize(image, label):
     return tf.image.convert_image_dtype(image, tf.float32), label
@@ -131,24 +148,24 @@ def train_single_run(run_id, seed, model_name, with_augmentation=False):
     print(f"  Training ResNet20v1 ({aug_label}) - Run {run_id} (seed={seed})")
     print(f"{'='*60}\n")
 
-    # Khởi tạo WandB cho run này
-    wandb.init(
-        project="loss-landscape",
-        name=f"{model_name}_run_{run_id}",
-        config={
-            "model": "ResNet20v1",
-            "epochs": EPOCHS,
-            "batch_size": BATCH_SIZE,
-            "seed": seed,
-            "run_id": run_id,
-            "augmentation": with_augmentation
-        }
-    )
+    if WANDB_OK:
+        wandb.init(
+            project="loss-landscape",
+            name=f"{model_name}_run_{run_id}",
+            config={
+                "model": "ResNet20v1",
+                "epochs": EPOCHS,
+                "batch_size": BATCH_SIZE,
+                "seed": seed,
+                "run_id": run_id,
+                "augmentation": with_augmentation,
+            },
+        )
 
     tf.random.set_seed(seed)
     np.random.seed(seed)
 
-    save_dir = os.path.join(f'/kaggle/working/{model_name}_weights', f'run_{run_id}')
+    save_dir = os.path.join(WORKING_DIR, f"{model_name}_weights", f"run_{run_id}")
     os.makedirs(save_dir, exist_ok=True)
 
     tf.keras.backend.clear_session()
@@ -171,7 +188,9 @@ def train_single_run(run_id, seed, model_name, with_augmentation=False):
         on_epoch_end=save_model_callback
     )
 
-    wandb_callback = wandb.keras.WandbCallback()
+    callbacks = [lr_callback, save_callback]
+    if WANDB_OK:
+        callbacks.append(wandb.keras.WandbCallback())
 
     train_ds = make_dataset(x_train, y_train, shuffle=True,
                             with_augmentation=with_augmentation)
@@ -182,7 +201,7 @@ def train_single_run(run_id, seed, model_name, with_augmentation=False):
         train_ds,
         validation_data=test_ds,
         epochs=EPOCHS,
-        callbacks=[lr_callback, save_callback, wandb_callback],
+        callbacks=callbacks,
         verbose=1
     )
     end = time.time()
@@ -207,7 +226,8 @@ def train_single_run(run_id, seed, model_name, with_augmentation=False):
     with open(os.path.join(save_dir, 'history.json'), 'w') as f:
         json.dump(history_dict, f, indent=2)
 
-    wandb.finish()
+    if WANDB_OK:
+        wandb.finish()
 
     return history_dict
 
@@ -273,7 +293,7 @@ axes[1, 1].legend()
 axes[1, 1].grid(True)
 
 plt.tight_layout()
-plt.savefig('/kaggle/working/resnet20_training_curves.png', dpi=150)
+plt.savefig(os.path.join(WORKING_DIR, "resnet20_training_curves.png"), dpi=150)
 plt.show()
 
 # %%

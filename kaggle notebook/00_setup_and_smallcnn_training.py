@@ -14,20 +14,45 @@ Mục tiêu:
 # # Phase 1: Setup môi trường
 
 # %%
-# Kiểm tra GPU
+# Kiểm tra GPU (Kaggle CPU kernel hoặc môi trường không có driver thì bỏ qua, không crash)
 import subprocess
-result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
-print(result.stdout)
+
+try:
+    result = subprocess.run(
+        ["nvidia-smi"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    print(result.stdout or result.stderr or "(nvidia-smi: không có output)")
+except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+    print("(nvidia-smi không chạy được — thường gặp khi chọn CPU-only hoặc driver chưa sẵn sàng.)", exc)
 
 # %%
-# Cài đặt thư viện cần thiết
-!pip install wandb --quiet
+import os
+import subprocess
+import sys
 
-# %%
-# Đăng nhập W&B với API key
-import wandb
-WANDB_API_KEY = "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"
-wandb.login(key=WANDB_API_KEY)
+# Kaggle: đảm bảo /kaggle/working trên sys.path để tìm được kaggle_utils.py khi cwd khác
+if os.path.isdir("/kaggle/working") and "/kaggle/working" not in sys.path:
+    sys.path.insert(0, "/kaggle/working")
+
+from kaggle_utils import WORKING_DIR, tf_autotune, wandb_login_optional
+
+WANDB_OK = wandb_login_optional()
+wandb = None
+if WANDB_OK:
+
+    def install(package):
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package, "--quiet"])
+
+    try:
+        import wandb as _wandb
+    except ImportError:
+        install("wandb")
+        import wandb as _wandb
+    wandb = _wandb
 
 # %%
 import tensorflow as tf
@@ -63,7 +88,7 @@ print(f"Test:  {x_test.shape}, {y_test.shape}")
 
 # %%
 # Tạo data pipeline
-AUTO = tf.data.experimental.AUTOTUNE
+AUTO = tf_autotune()
 BATCH_SIZE = 128
 IMG_SHAPE = 32
 
@@ -161,8 +186,7 @@ plt.show()
 EPOCHS = 40
 NUM_RUNS = 5  # Số lần train với random init khác nhau
 
-# Thư mục lưu weights (trên Kaggle, dùng /kaggle/working/)
-BASE_SAVE_DIR = '/kaggle/working/smallcnn_weights'
+BASE_SAVE_DIR = os.path.join(WORKING_DIR, "smallcnn_weights")
 os.makedirs(BASE_SAVE_DIR, exist_ok=True)
 
 # %% [markdown]
@@ -176,18 +200,18 @@ def train_single_run(run_id, seed):
     print(f"  Training SmallCNN - Run {run_id} (seed={seed})")
     print(f"{'='*60}\n")
 
-    # Khởi tạo WandB cho run này
-    wandb.init(
-        project="loss-landscape",
-        name=f"smallcnn_run_{run_id}",
-        config={
-            "model": "SmallCNN",
-            "epochs": EPOCHS,
-            "batch_size": BATCH_SIZE,
-            "seed": seed,
-            "run_id": run_id
-        }
-    )
+    if WANDB_OK:
+        wandb.init(
+            project="loss-landscape",
+            name=f"smallcnn_run_{run_id}",
+            config={
+                "model": "SmallCNN",
+                "epochs": EPOCHS,
+                "batch_size": BATCH_SIZE,
+                "seed": seed,
+                "run_id": run_id,
+            },
+        )
 
     # Set random seed
     tf.random.set_seed(seed)
@@ -215,7 +239,9 @@ def train_single_run(run_id, seed):
         on_epoch_end=save_model_callback
     )
 
-    wandb_callback = wandb.keras.WandbCallback()
+    callbacks = [lr_callback, save_callback]
+    if WANDB_OK:
+        callbacks.append(wandb.keras.WandbCallback())
 
     # Recreate data pipeline mỗi run (để shuffle khác nhau)
     train_ds = make_dataset(x_train, y_train, shuffle=True)
@@ -227,7 +253,7 @@ def train_single_run(run_id, seed):
         train_ds,
         epochs=EPOCHS,
         validation_data=test_ds,
-        callbacks=[lr_callback, save_callback, wandb_callback],
+        callbacks=callbacks,
         verbose=1
     )
     end = time.time()
@@ -252,7 +278,8 @@ def train_single_run(run_id, seed):
     with open(os.path.join(save_dir, 'history.json'), 'w') as f:
         json.dump(history_dict, f, indent=2)
 
-    wandb.finish()
+    if WANDB_OK:
+        wandb.finish()
 
     return history_dict
 

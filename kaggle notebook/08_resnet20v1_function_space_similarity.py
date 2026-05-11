@@ -15,15 +15,25 @@ Yêu cầu:
 """
 
 # %%
+import os
+import sys
+
+if os.path.isdir("/kaggle/working") and "/kaggle/working" not in sys.path:
+    sys.path.insert(0, "/kaggle/working")
+
 import tensorflow as tf
 import numpy as np
-import os
 import json
-import subprocess
-import wandb
+
+from kaggle_utils import (
+    ensure_resnet_cifar10_module,
+    ensure_umap,
+    get_weights_dir,
+    load_keras_model,
+    output_path,
+)
 
 from numpy.linalg import norm
-from sklearn.manifold import TSNE
 from sklearn.metrics import accuracy_score
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -31,25 +41,16 @@ import seaborn as sns
 
 sns.set()
 
-WANDB_API_KEY = "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"
-wandb.login(key=WANDB_API_KEY)
-
 print(f"TensorFlow version: {tf.__version__}")
 
-# Install UMAP for memory-efficient dimensionality reduction
-# %%
-subprocess.run(['pip', 'install', 'umap-learn', '--quiet'])
+ensure_umap()
 import umap
 
 # %% [markdown]
 # # Download ResNet module & Load CIFAR-10
 
 # %%
-if not os.path.exists('resnet_cifar10.py'):
-    subprocess.run([
-        'wget',
-        'https://raw.githubusercontent.com/GoogleCloudPlatform/keras-idiomatic-programmer/master/zoo/resnet/resnet_cifar10.py'
-    ])
+ensure_resnet_cifar10_module()
 
 (x_train, y_train), (x_test, y_test) = tf.keras.datasets.cifar10.load_data()
 y_test = y_test.flatten()
@@ -106,14 +107,15 @@ print("\n" + "="*50)
 print("  PART A: NO AUGMENTATION")
 print("="*50)
 
-all_models_noaug = get_checkpoints_dict('/kaggle/working/resnet20_noaug_weights', NUM_RUNS, EPOCHS)
+weights_noaug = get_weights_dir('resnet20_noaug_weights')
+all_models_noaug = get_checkpoints_dict(weights_noaug, NUM_RUNS, EPOCHS)
 
 # 1. Cosine Similarity - Snapshots
 snapshot_epochs = list(range(0, EPOCHS, 5))
 snapshot_weights_noaug = {}
 for epoch in tqdm(snapshot_epochs, desc="[NoAug] Loading snapshots"):
     if epoch in all_models_noaug[analysis_run]:
-        model = tf.keras.models.load_model(all_models_noaug[analysis_run][epoch])
+        model = load_keras_model(all_models_noaug[analysis_run][epoch])
         snapshot_weights_noaug[epoch] = flatten_weights(model)
         tf.keras.backend.clear_session()
 
@@ -129,7 +131,7 @@ final_epoch = EPOCHS - 1
 trajectory_weights_noaug = {}
 for run_id in tqdm(range(1, NUM_RUNS + 1), desc="[NoAug] Loading trajectories"):
     if final_epoch in all_models_noaug[run_id]:
-        model = tf.keras.models.load_model(all_models_noaug[run_id][final_epoch])
+        model = load_keras_model(all_models_noaug[run_id][final_epoch])
         trajectory_weights_noaug[run_id] = flatten_weights(model)
         tf.keras.backend.clear_session()
 
@@ -144,8 +146,8 @@ for i in range(NUM_RUNS):
 snapshot_preds_noaug = {}
 for epoch in tqdm(snapshot_epochs, desc="[NoAug] Preds snapshots"):
     if epoch in all_models_noaug[analysis_run]:
-        model = tf.keras.models.load_model(all_models_noaug[analysis_run][epoch])
-        snapshot_preds_noaug[epoch] = np.argmax(model.predict(x_test_norm), axis=1)
+        model = load_keras_model(all_models_noaug[analysis_run][epoch])
+        snapshot_preds_noaug[epoch] = np.argmax(model.predict(x_test_norm, verbose=0), axis=1)
         tf.keras.backend.clear_session()
 
 disagree_snap_noaug = np.zeros((n_snapshots, n_snapshots))
@@ -158,8 +160,8 @@ for i, e1 in enumerate(snapshot_epochs):
 trajectory_preds_noaug = {}
 for run_id in tqdm(range(1, NUM_RUNS + 1), desc="[NoAug] Preds trajectories"):
     if final_epoch in all_models_noaug[run_id]:
-        model = tf.keras.models.load_model(all_models_noaug[run_id][final_epoch])
-        trajectory_preds_noaug[run_id] = np.argmax(model.predict(x_test_norm), axis=1)
+        model = load_keras_model(all_models_noaug[run_id][final_epoch])
+        trajectory_preds_noaug[run_id] = np.argmax(model.predict(x_test_norm, verbose=0), axis=1)
         tf.keras.backend.clear_session()
 
 disagree_traj_noaug = np.zeros((NUM_RUNS, NUM_RUNS))
@@ -178,13 +180,14 @@ print("\n" + "="*50)
 print("  PART B: WITH AUGMENTATION")
 print("="*50)
 
-all_models_aug = get_checkpoints_dict('/kaggle/working/resnet20_aug_weights', NUM_RUNS, EPOCHS)
+weights_aug = get_weights_dir('resnet20_aug_weights')
+all_models_aug = get_checkpoints_dict(weights_aug, NUM_RUNS, EPOCHS)
 
 # 1. Cosine Similarity - Snapshots
 snapshot_weights_aug = {}
 for epoch in tqdm(snapshot_epochs, desc="[Aug] Loading snapshots"):
     if epoch in all_models_aug[analysis_run]:
-        model = tf.keras.models.load_model(all_models_aug[analysis_run][epoch])
+        model = load_keras_model(all_models_aug[analysis_run][epoch])
         snapshot_weights_aug[epoch] = flatten_weights(model)
         tf.keras.backend.clear_session()
 
@@ -198,7 +201,7 @@ for i, e1 in enumerate(snapshot_epochs):
 trajectory_weights_aug = {}
 for run_id in tqdm(range(1, NUM_RUNS + 1), desc="[Aug] Loading trajectories"):
     if final_epoch in all_models_aug[run_id]:
-        model = tf.keras.models.load_model(all_models_aug[run_id][final_epoch])
+        model = load_keras_model(all_models_aug[run_id][final_epoch])
         trajectory_weights_aug[run_id] = flatten_weights(model)
         tf.keras.backend.clear_session()
 
@@ -213,8 +216,8 @@ for i in range(NUM_RUNS):
 snapshot_preds_aug = {}
 for epoch in tqdm(snapshot_epochs, desc="[Aug] Preds snapshots"):
     if epoch in all_models_aug[analysis_run]:
-        model = tf.keras.models.load_model(all_models_aug[analysis_run][epoch])
-        snapshot_preds_aug[epoch] = np.argmax(model.predict(x_test_norm), axis=1)
+        model = load_keras_model(all_models_aug[analysis_run][epoch])
+        snapshot_preds_aug[epoch] = np.argmax(model.predict(x_test_norm, verbose=0), axis=1)
         tf.keras.backend.clear_session()
 
 disagree_snap_aug = np.zeros((n_snapshots, n_snapshots))
@@ -227,8 +230,8 @@ for i, e1 in enumerate(snapshot_epochs):
 trajectory_preds_aug = {}
 for run_id in tqdm(range(1, NUM_RUNS + 1), desc="[Aug] Preds trajectories"):
     if final_epoch in all_models_aug[run_id]:
-        model = tf.keras.models.load_model(all_models_aug[run_id][final_epoch])
-        trajectory_preds_aug[run_id] = np.argmax(model.predict(x_test_norm), axis=1)
+        model = load_keras_model(all_models_aug[run_id][final_epoch])
+        trajectory_preds_aug[run_id] = np.argmax(model.predict(x_test_norm, verbose=0), axis=1)
         tf.keras.backend.clear_session()
 
 disagree_traj_aug = np.zeros((NUM_RUNS, NUM_RUNS))
@@ -271,7 +274,7 @@ axes[1, 1].set_yticks(range(NUM_RUNS)); axes[1, 1].set_yticklabels(range(1, NUM_
 plt.colorbar(im4, ax=axes[1, 1])
 
 plt.tight_layout()
-plt.savefig('/kaggle/working/resnet20_cosine_similarity.png', dpi=150)
+plt.savefig(output_path("resnet20_cosine_similarity.png"), dpi=150)
 plt.show()
 
 # %% [markdown]
@@ -307,7 +310,7 @@ axes[1, 1].set_yticks(range(NUM_RUNS)); axes[1, 1].set_yticklabels(range(1, NUM_
 plt.colorbar(im4, ax=axes[1, 1])
 
 plt.tight_layout()
-plt.savefig('/kaggle/working/resnet20_prediction_disagreement.png', dpi=150)
+plt.savefig(output_path("resnet20_prediction_disagreement.png"), dpi=150)
 plt.show()
 
 # %% [markdown]
@@ -329,7 +332,7 @@ print("Preparing weights for UMAP (No Augmentation)...")
 for run_id in tqdm(range(1, NUM_RUNS + 1)):
     for epoch in tsne_epochs:
         if epoch in all_models_noaug[run_id]:
-            model = tf.keras.models.load_model(all_models_noaug[run_id][epoch])
+            model = load_keras_model(all_models_noaug[run_id][epoch])
             # Subsample 20% weights để giảm RAM nếu cần (tuỳ chọn)
             tsne_weights.append(flatten_weights(model, subsample=0.2))
             tsne_colors.append(run_id)
@@ -370,30 +373,51 @@ ax.set_title("ResNet20v1 (No Aug): UMAP of Weight Vectors\n(large dot=epoch 0, s
 ax.legend(fontsize=10, loc='best')
 ax.grid(True, alpha=0.2)
 plt.tight_layout()
-plt.savefig('/kaggle/working/resnet20_umap.png', dpi=150)
+plt.savefig(output_path("resnet20_umap.png"), dpi=150)
 plt.show()
 
-# %% [markdown]
-# # Log to W&B
-
 # %%
-wandb.init(
-    project="loss-landscape",
-    name="resnet20v1_function_space_similarity",
-    config={"model": "ResNet20v1", "experiment": "function_space_similarity"}
-)
+with open(output_path("resnet20_function_space_summary.json"), "w") as f:
+    json.dump(
+        {
+            "model": "ResNet20v1",
+            "experiment": "function_space_similarity",
+            "noaug_snapshot_cos_sim_mean": float(
+                np.mean(cos_sim_snap_noaug[np.triu_indices(n_snapshots, k=1)])
+            ),
+            "noaug_trajectory_cos_sim_mean": float(
+                np.mean(cos_sim_traj_noaug[np.triu_indices(NUM_RUNS, k=1)])
+            ),
+            "aug_snapshot_cos_sim_mean": float(
+                np.mean(cos_sim_snap_aug[np.triu_indices(n_snapshots, k=1)])
+            ),
+            "aug_trajectory_cos_sim_mean": float(
+                np.mean(cos_sim_traj_aug[np.triu_indices(NUM_RUNS, k=1)])
+            ),
+        },
+        f,
+        indent=2,
+    )
 
-wandb.log({
-    "cosine_similarity": wandb.Image('/kaggle/working/resnet20_cosine_similarity.png'),
-    "prediction_disagreement": wandb.Image('/kaggle/working/resnet20_prediction_disagreement.png'),
-    "umap_visualization": wandb.Image('/kaggle/working/resnet20_umap.png'),
-    "noaug_snapshot_cos_sim": float(np.mean(cos_sim_snap_noaug[np.triu_indices(n_snapshots, k=1)])),
-    "noaug_trajectory_cos_sim": float(np.mean(cos_sim_traj_noaug[np.triu_indices(NUM_RUNS, k=1)])),
-    "aug_snapshot_cos_sim": float(np.mean(cos_sim_snap_aug[np.triu_indices(n_snapshots, k=1)])),
-    "aug_trajectory_cos_sim": float(np.mean(cos_sim_traj_aug[np.triu_indices(NUM_RUNS, k=1)])),
-})
+na_s = float(np.mean(cos_sim_snap_noaug[np.triu_indices(n_snapshots, k=1)]))
+na_t = float(np.mean(cos_sim_traj_noaug[np.triu_indices(NUM_RUNS, k=1)]))
+ag_s = float(np.mean(cos_sim_snap_aug[np.triu_indices(n_snapshots, k=1)]))
+ag_t = float(np.mean(cos_sim_traj_aug[np.triu_indices(NUM_RUNS, k=1)]))
 
-wandb.finish()
+fig, ax = plt.subplots(figsize=(8, 4))
+x = np.arange(2)
+w = 0.35
+ax.bar(x - w / 2, [na_s, na_t], width=w, label="No Aug", color="#4C72B0", edgecolor="black")
+ax.bar(x + w / 2, [ag_s, ag_t], width=w, label="Aug", color="#55A868", edgecolor="black")
+ax.set_xticks(x)
+ax.set_xticklabels(["Snapshots", "Trajectories"])
+ax.set_ylabel("Mean cosine similarity")
+ax.set_title("ResNet20v1: cosine similarity (summary)")
+ax.legend()
+ax.grid(True, axis="y", alpha=0.3)
+plt.tight_layout()
+plt.savefig(output_path("resnet20_function_space_summary_bars.png"), dpi=150)
+plt.show()
 
 # %%
 print("\n" + "="*60)

@@ -21,11 +21,17 @@ Yêu cầu:
 """
 
 # %%
+import os
+import sys
+
+if os.path.isdir("/kaggle/working") and "/kaggle/working" not in sys.path:
+    sys.path.insert(0, "/kaggle/working")
+
 import tensorflow as tf
 import numpy as np
-import os
 import json
-import wandb
+
+from kaggle_utils import get_weights_dir, load_keras_model, output_path
 
 from tensorflow import keras
 from tensorflow.keras.datasets import cifar10
@@ -37,10 +43,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 sns.set()
-
-# Đăng nhập W&B
-WANDB_API_KEY = "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"
-wandb.login(key=WANDB_API_KEY)
 
 print(f"TensorFlow version: {tf.__version__}")
 
@@ -58,7 +60,7 @@ print(f"Test set: {x_test_norm.shape}, {y_test.shape}")
 # # Load ALL SmallCNN checkpoints (mỗi epoch, mỗi run)
 
 # %%
-WEIGHTS_DIR = '/kaggle/working/smallcnn_weights'
+WEIGHTS_DIR = get_weights_dir("smallcnn_weights")
 NUM_RUNS = 5
 EPOCHS = 40
 
@@ -113,7 +115,7 @@ snapshot_epochs = list(range(0, EPOCHS, 5))  # Lấy mỗi 5 epochs
 snapshot_weights = {}
 for epoch in tqdm(snapshot_epochs, desc=f"Loading run {analysis_run} snapshots"):
     if epoch in all_models[analysis_run]:
-        model = tf.keras.models.load_model(all_models[analysis_run][epoch])
+        model = load_keras_model(all_models[analysis_run][epoch])
         snapshot_weights[epoch] = flatten_weights(model)
         tf.keras.backend.clear_session()
 
@@ -141,7 +143,7 @@ final_epoch = EPOCHS - 1
 trajectory_weights = {}
 for run_id in tqdm(range(1, NUM_RUNS + 1), desc="Loading final models"):
     if final_epoch in all_models[run_id]:
-        model = tf.keras.models.load_model(all_models[run_id][final_epoch])
+        model = load_keras_model(all_models[run_id][final_epoch])
         trajectory_weights[run_id] = flatten_weights(model)
         tf.keras.backend.clear_session()
 
@@ -189,7 +191,7 @@ axes[1].set_yticklabels(range(1, NUM_RUNS + 1))
 plt.colorbar(im2, ax=axes[1])
 
 plt.tight_layout()
-plt.savefig('/kaggle/working/smallcnn_cosine_similarity.png', dpi=150)
+plt.savefig(output_path("smallcnn_cosine_similarity.png"), dpi=150)
 plt.show()
 
 # %% [markdown]
@@ -204,8 +206,8 @@ print("Computing prediction disagreement between SNAPSHOTS...")
 snapshot_preds = {}
 for epoch in tqdm(snapshot_epochs, desc=f"Predictions run {analysis_run}"):
     if epoch in all_models[analysis_run]:
-        model = tf.keras.models.load_model(all_models[analysis_run][epoch])
-        preds = np.argmax(model.predict(x_test_norm), axis=1)
+        model = load_keras_model(all_models[analysis_run][epoch])
+        preds = np.argmax(model.predict(x_test_norm, verbose=0), axis=1)
         snapshot_preds[epoch] = preds
         tf.keras.backend.clear_session()
 
@@ -230,8 +232,8 @@ print("\nComputing prediction disagreement between TRAJECTORIES...")
 trajectory_preds = {}
 for run_id in tqdm(range(1, NUM_RUNS + 1), desc="Predictions final epoch"):
     if final_epoch in all_models[run_id]:
-        model = tf.keras.models.load_model(all_models[run_id][final_epoch])
-        preds = np.argmax(model.predict(x_test_norm), axis=1)
+        model = load_keras_model(all_models[run_id][final_epoch])
+        preds = np.argmax(model.predict(x_test_norm, verbose=0), axis=1)
         trajectory_preds[run_id] = preds
         tf.keras.backend.clear_session()
 
@@ -278,7 +280,7 @@ axes[1].set_yticklabels(range(1, NUM_RUNS + 1))
 plt.colorbar(im2, ax=axes[1])
 
 plt.tight_layout()
-plt.savefig('/kaggle/working/smallcnn_prediction_disagreement.png', dpi=150)
+plt.savefig(output_path("smallcnn_prediction_disagreement.png"), dpi=150)
 plt.show()
 
 # %% [markdown]
@@ -298,7 +300,7 @@ tsne_epochs = list(range(0, EPOCHS, 2))  # Mỗi 2 epochs
 for run_id in tqdm(range(1, NUM_RUNS + 1), desc="Loading for tSNE"):
     for epoch in tsne_epochs:
         if epoch in all_models[run_id]:
-            model = tf.keras.models.load_model(all_models[run_id][epoch])
+            model = load_keras_model(all_models[run_id][epoch])
             w = flatten_weights(model)
             tsne_weights.append(w)
             tsne_labels.append((run_id, epoch))
@@ -314,7 +316,7 @@ print(f"Total data points: {len(tsne_labels)}")
 # %%
 print("Running tSNE (this may take a few minutes)...")
 
-tsne = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=1000)
+tsne = TSNE(n_components=2, random_state=42, perplexity=30, max_iter=1000)
 tsne_results = tsne.fit_transform(tsne_weights)
 
 print("tSNE complete!")
@@ -358,40 +360,49 @@ ax.legend(fontsize=10, loc='best')
 ax.grid(True, alpha=0.2)
 plt.tight_layout()
 
-plt.savefig('/kaggle/working/smallcnn_tsne.png', dpi=150)
+plt.savefig(output_path("smallcnn_tsne.png"), dpi=150)
 plt.show()
 
-# %% [markdown]
-# # Log to W&B
-
 # %%
-wandb.init(
-    project="loss-landscape",
-    name="smallcnn_function_space_similarity",
-    config={
-        "model": "SmallCNN",
-        "experiment": "function_space_similarity",
-        "num_runs": NUM_RUNS,
-        "epochs": EPOCHS
-    }
-)
+with open(output_path("smallcnn_function_space_summary.json"), "w") as f:
+    json.dump(
+        {
+            "model": "SmallCNN",
+            "experiment": "function_space_similarity",
+            "snapshot_cos_sim_mean": float(
+                np.mean(cos_sim_snapshots[np.triu_indices(n_snapshots, k=1)])
+            ),
+            "trajectory_cos_sim_mean": float(
+                np.mean(cos_sim_trajectories[np.triu_indices(NUM_RUNS, k=1)])
+            ),
+            "snapshot_disagree_mean_pct": float(
+                np.mean(disagree_snapshots[np.triu_indices(n_snapshots, k=1)])
+            ),
+            "trajectory_disagree_mean_pct": float(
+                np.mean(disagree_trajectories[np.triu_indices(NUM_RUNS, k=1)])
+            ),
+        },
+        f,
+        indent=2,
+    )
 
-# Log all plots
-wandb.log({
-    "cosine_similarity": wandb.Image('/kaggle/working/smallcnn_cosine_similarity.png'),
-    "prediction_disagreement": wandb.Image('/kaggle/working/smallcnn_prediction_disagreement.png'),
-    "tsne_visualization": wandb.Image('/kaggle/working/smallcnn_tsne.png'),
-})
+snap_cos = float(np.mean(cos_sim_snapshots[np.triu_indices(n_snapshots, k=1)]))
+traj_cos = float(np.mean(cos_sim_trajectories[np.triu_indices(NUM_RUNS, k=1)]))
+snap_dis = float(np.mean(disagree_snapshots[np.triu_indices(n_snapshots, k=1)]))
+traj_dis = float(np.mean(disagree_trajectories[np.triu_indices(NUM_RUNS, k=1)]))
 
-# Log summary metrics
-wandb.log({
-    "snapshot_cos_sim_mean": np.mean(cos_sim_snapshots[np.triu_indices(n_snapshots, k=1)]),
-    "trajectory_cos_sim_mean": np.mean(cos_sim_trajectories[np.triu_indices(NUM_RUNS, k=1)]),
-    "snapshot_disagree_mean": np.mean(disagree_snapshots[np.triu_indices(n_snapshots, k=1)]),
-    "trajectory_disagree_mean": np.mean(disagree_trajectories[np.triu_indices(NUM_RUNS, k=1)]),
-})
-
-wandb.finish()
+fig, axes = plt.subplots(1, 2, figsize=(9, 4))
+axes[0].bar(["Snapshots", "Trajectories"], [snap_cos, traj_cos], color=["#4C72B0", "#DD8452"], edgecolor="black")
+axes[0].set_ylabel("Mean cosine similarity")
+axes[0].set_title("SmallCNN: cosine similarity (summary)")
+axes[0].grid(True, axis="y", alpha=0.3)
+axes[1].bar(["Snapshots", "Trajectories"], [snap_dis, traj_dis], color=["#4C72B0", "#DD8452"], edgecolor="black")
+axes[1].set_ylabel("Mean prediction disagreement (%)")
+axes[1].set_title("SmallCNN: prediction disagreement (summary)")
+axes[1].grid(True, axis="y", alpha=0.3)
+plt.tight_layout()
+plt.savefig(output_path("smallcnn_function_space_summary_bars.png"), dpi=150)
+plt.show()
 
 # %%
 print("\n" + "="*60)

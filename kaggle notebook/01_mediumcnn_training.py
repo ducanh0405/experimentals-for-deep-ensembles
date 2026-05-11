@@ -10,20 +10,37 @@ Mục tiêu:
 """
 
 # %%
+import os
+import sys
+
+if os.path.isdir("/kaggle/working") and "/kaggle/working" not in sys.path:
+    sys.path.insert(0, "/kaggle/working")
+
 import tensorflow as tf
 import numpy as np
-import os
 import time
 import json
-import wandb
+import subprocess
+
+from kaggle_utils import WORKING_DIR, tf_autotune, wandb_login_optional
+
+WANDB_OK = wandb_login_optional()
+wandb = None
+if WANDB_OK:
+
+    def install(package):
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package, "--quiet"])
+
+    try:
+        import wandb as _wandb
+    except ImportError:
+        install("wandb")
+        import wandb as _wandb
+    wandb = _wandb
 
 from tensorflow import keras
 from tensorflow.keras.datasets import cifar10
 import matplotlib.pyplot as plt
-
-# Đăng nhập W&B với API key
-WANDB_API_KEY = "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"
-wandb.login(key=WANDB_API_KEY)
 
 print(f"TensorFlow version: {tf.__version__}")
 print(f"GPU available: {tf.config.list_physical_devices('GPU')}")
@@ -36,7 +53,7 @@ print(f"GPU available: {tf.config.list_physical_devices('GPU')}")
 CLASS_NAMES = ("airplane", "automobile", "bird", "cat", "deer",
                "dog", "frog", "horse", "ship", "truck")
 
-AUTO = tf.data.experimental.AUTOTUNE
+AUTO = tf_autotune()
 BATCH_SIZE = 128
 IMG_SHAPE = 32
 
@@ -125,7 +142,7 @@ def lr_schedule(epoch):
 
 EPOCHS = 40
 NUM_RUNS = 5
-BASE_SAVE_DIR = '/kaggle/working/mediumcnn_weights'
+BASE_SAVE_DIR = os.path.join(WORKING_DIR, "mediumcnn_weights")
 os.makedirs(BASE_SAVE_DIR, exist_ok=True)
 
 # %% [markdown]
@@ -139,18 +156,18 @@ def train_single_run(run_id, seed):
     print(f"  Training MediumCNN - Run {run_id} (seed={seed})")
     print(f"{'='*60}\n")
 
-    # Khởi tạo WandB cho run này
-    wandb.init(
-        project="loss-landscape",
-        name=f"mediumcnn_run_{run_id}",
-        config={
-            "model": "MediumCNN",
-            "epochs": EPOCHS,
-            "batch_size": BATCH_SIZE,
-            "seed": seed,
-            "run_id": run_id
-        }
-    )
+    if WANDB_OK:
+        wandb.init(
+            project="loss-landscape",
+            name=f"mediumcnn_run_{run_id}",
+            config={
+                "model": "MediumCNN",
+                "epochs": EPOCHS,
+                "batch_size": BATCH_SIZE,
+                "seed": seed,
+                "run_id": run_id,
+            },
+        )
 
     tf.random.set_seed(seed)
     np.random.seed(seed)
@@ -174,7 +191,9 @@ def train_single_run(run_id, seed):
         on_epoch_end=save_model_callback
     )
 
-    wandb_callback = wandb.keras.WandbCallback()
+    callbacks = [lr_callback, save_callback]
+    if WANDB_OK:
+        callbacks.append(wandb.keras.WandbCallback())
 
     train_ds = make_dataset(x_train, y_train, shuffle=True)
     test_ds = make_dataset(x_test, y_test, shuffle=False)
@@ -184,7 +203,7 @@ def train_single_run(run_id, seed):
         train_ds,
         epochs=EPOCHS,
         validation_data=test_ds,
-        callbacks=[lr_callback, save_callback, wandb_callback],
+        callbacks=callbacks,
         verbose=1
     )
     end = time.time()
@@ -207,7 +226,8 @@ def train_single_run(run_id, seed):
     with open(os.path.join(save_dir, 'history.json'), 'w') as f:
         json.dump(history_dict, f, indent=2)
 
-    wandb.finish()
+    if WANDB_OK:
+        wandb.finish()
 
     return history_dict
 
